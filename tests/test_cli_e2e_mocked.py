@@ -10,7 +10,7 @@ text cleaning, timing map construction, clip file writing, and stitch
 orchestration.
 
 This is NOT a unit test — it's a boundary contract test. If the pipeline
-changes what it sends to the API or how it invokes ffmpeg, this test breaks 
+changes what it sends to the API or how it invokes ffmpeg, this test breaks
 and that is expected and normal, it is a trade-off we are making.
 """
 
@@ -30,7 +30,163 @@ pytestmark = pytest.mark.e2e
 
 
 # ======================================================================
-# Expected pipeline outputs per format
+# Scenarios — read these first
+# ======================================================================
+
+
+class TestFullGenerateLabeledPipeline:
+    """Labeled format: 8 paragraphs, alternating Dr. Jung / Eissler."""
+
+    def test_boundary_contracts(self, tmp_path):
+        captures = _new_captures()
+        output_name = "dubbed_output.mp3"
+
+        result, input_file = _run_pipeline(
+            tmp_path,
+            "sample_labeled.txt",
+            lambda f: [
+                "generate", str(f),
+                "--voice", "Dr. Jung=jung_voice_id",
+                "--voice", "Eissler=eissler_voice_id",
+                "--api-key", "test_api_key_123",
+                "--output", str(tmp_path / output_name),
+                "--keep-clips", "--rate-limit", "0",
+            ],
+            captures,
+        )
+
+        assert result.exit_code == 0, f"CLI failed:\n{result.output}"
+
+        # -- TTS API calls: 8 paragraphs, exact text ---
+        _assert_tts_calls(captures, EXPECTED_LABELED)
+
+        # -- Clip files on disk ---
+        clips_dir = tmp_path / "sample_labeled_clips"
+        _assert_clip_files(clips_dir, EXPECTED_LABELED)
+
+        # -- ffmpeg: 8 conversions + 1 concat = 9 calls ---
+        ffmpeg_calls, ffprobe_calls = _split_subprocess_calls(captures)
+        assert len(ffmpeg_calls) == 9
+        _assert_ffmpeg_conversions(ffmpeg_calls, EXPECTED_LABELED)
+        _assert_ffmpeg_concat(ffmpeg_calls[8], output_name)
+
+        # -- concat.txt: 1 clip + 7 × (silence + clip) = 15 entries ---
+        _assert_concat_filenames(captures, [
+            "clip_0001.wav",
+            "silence_0002.wav", "clip_0002.wav",
+            "silence_0003.wav", "clip_0003.wav",
+            "silence_0004.wav", "clip_0004.wav",
+            "silence_0005.wav", "clip_0005.wav",
+            "silence_0006.wav", "clip_0006.wav",
+            "silence_0007.wav", "clip_0007.wav",
+            "silence_0008.wav", "clip_0008.wav",
+        ])
+
+        # -- ffprobe + CLI output ---
+        _assert_ffprobe(ffprobe_calls, output_name)
+        assert "Done!" in result.output
+        assert "42.5" in result.output
+
+
+class TestFullGenerateSrtPipeline:
+    """SRT format: 6 paragraphs, alternating JUNG / EISSLER."""
+
+    def test_boundary_contracts(self, tmp_path):
+        captures = _new_captures()
+        output_name = "dubbed_output.mp3"
+
+        result, input_file = _run_pipeline(
+            tmp_path,
+            "sample.srt",
+            lambda f: [
+                "generate", str(f),
+                "--voice", "JUNG=jung_voice_id",
+                "--voice", "EISSLER=eissler_voice_id",
+                "--api-key", "test_api_key_123",
+                "--output", str(tmp_path / output_name),
+                "--keep-clips", "--rate-limit", "0",
+            ],
+            captures,
+        )
+
+        assert result.exit_code == 0, f"CLI failed:\n{result.output}"
+
+        # -- TTS API calls: 6 paragraphs, exact text ---
+        _assert_tts_calls(captures, EXPECTED_SRT)
+
+        # -- Clip files on disk ---
+        clips_dir = tmp_path / "sample_clips"
+        _assert_clip_files(clips_dir, EXPECTED_SRT)
+
+        # -- ffmpeg: 6 conversions + 1 concat = 7 calls ---
+        ffmpeg_calls, ffprobe_calls = _split_subprocess_calls(captures)
+        assert len(ffmpeg_calls) == 7
+        _assert_ffmpeg_conversions(ffmpeg_calls, EXPECTED_SRT)
+        _assert_ffmpeg_concat(ffmpeg_calls[6], output_name)
+
+        # -- concat.txt: 1 clip + 5 × (silence + clip) = 11 entries ---
+        _assert_concat_filenames(captures, [
+            "clip_0001.wav",
+            "silence_0002.wav", "clip_0002.wav",
+            "silence_0003.wav", "clip_0003.wav",
+            "silence_0004.wav", "clip_0004.wav",
+            "silence_0005.wav", "clip_0005.wav",
+            "silence_0006.wav", "clip_0006.wav",
+        ])
+
+        # -- ffprobe + CLI output ---
+        _assert_ffprobe(ffprobe_calls, output_name)
+        assert "Done!" in result.output
+        assert "42.5" in result.output
+
+
+class TestFullGeneratePlainPipeline:
+    """Plain text: 7 paragraphs, all same speaker → consolidated to 1."""
+
+    def test_boundary_contracts(self, tmp_path):
+        captures = _new_captures()
+        output_name = "dubbed_output.mp3"
+
+        result, input_file = _run_pipeline(
+            tmp_path,
+            "sample_plain.txt",
+            lambda f: [
+                "generate", str(f),
+                "--format", "plain",
+                "--voice", "Speaker=narrator_voice_id",
+                "--api-key", "test_api_key_123",
+                "--output", str(tmp_path / output_name),
+                "--keep-clips", "--rate-limit", "0",
+            ],
+            captures,
+        )
+
+        assert result.exit_code == 0, f"CLI failed:\n{result.output}"
+
+        # -- TTS API calls: 1 paragraph (all merged) ---
+        _assert_tts_calls(captures, EXPECTED_PLAIN)
+
+        # -- Clip files on disk ---
+        clips_dir = tmp_path / "sample_plain_clips"
+        _assert_clip_files(clips_dir, EXPECTED_PLAIN)
+
+        # -- ffmpeg: 1 conversion + 1 concat = 2 calls ---
+        ffmpeg_calls, ffprobe_calls = _split_subprocess_calls(captures)
+        assert len(ffmpeg_calls) == 2
+        _assert_ffmpeg_conversions(ffmpeg_calls, EXPECTED_PLAIN)
+        _assert_ffmpeg_concat(ffmpeg_calls[1], output_name)
+
+        # -- concat.txt: just 1 clip (no pauses — single paragraph) ---
+        _assert_concat_filenames(captures, ["clip_0001.wav"])
+
+        # -- ffprobe + CLI output ---
+        _assert_ffprobe(ffprobe_calls, output_name)
+        assert "Done!" in result.output
+        assert "42.5" in result.output
+
+
+# ======================================================================
+# Expected pipeline outputs — the spec
 # ======================================================================
 # Each entry is the EXACT text that should arrive at the TTS API boundary
 # after parse → consolidate → clean_for_tts.
@@ -212,12 +368,41 @@ EXPECTED_PLAIN = [
 
 
 # ======================================================================
-# Shared mock factories
+# Plumbing — mock factories and assertion helpers
 # ======================================================================
 
 
-def _make_tts_mock(captures):
-    """Create a requests.post mock that captures TTS API calls."""
+def _new_captures():
+    return {
+        "tts_calls": [],
+        "subprocess_calls": [],
+        "concat_file_content": None,
+    }
+
+
+def _run_pipeline(tmp_path, fixture_name, cli_args, captures):
+    """Run the generate pipeline with mocked boundaries."""
+    input_file = tmp_path / fixture_name
+    shutil.copy(FIXTURES / fixture_name, input_file)
+
+    runner = CliRunner()
+    with (
+        patch(
+            "dub_chunk.tts.requests.post",
+            side_effect=_mock_tts_post(captures),
+        ),
+        patch(
+            "dub_chunk.stitch.subprocess.run",
+            side_effect=_mock_subprocess_run(captures),
+        ),
+    ):
+        result = runner.invoke(main, cli_args(input_file))
+
+    return result, input_file
+
+
+def _mock_tts_post(captures):
+    """Intercept requests.post → capture call, return fake MP3."""
 
     def mock_post(url, json=None, headers=None, timeout=None):
         captures["tts_calls"].append({
@@ -235,14 +420,8 @@ def _make_tts_mock(captures):
     return mock_post
 
 
-def _make_subprocess_mock(captures):
-    """Create a subprocess.run mock that captures ffmpeg/ffprobe calls.
-
-    Side effects:
-      - ffmpeg concat: creates a dummy output file (so ffprobe path check passes)
-      - ffmpeg concat: reads concat.txt content before temp cleanup
-      - ffprobe: returns fake duration JSON
-    """
+def _mock_subprocess_run(captures):
+    """Intercept subprocess.run → capture argv, handle ffmpeg/ffprobe."""
 
     def mock_run(cmd, **kwargs):
         cmd = list(cmd)
@@ -274,36 +453,11 @@ def _make_subprocess_mock(captures):
     return mock_run
 
 
-def _run_pipeline(tmp_path, fixture_name, cli_args, captures):
-    """Run the generate pipeline with mocked boundaries.
-
-    Returns the CliRunner result.
-    """
-    input_file = tmp_path / fixture_name
-    shutil.copy(FIXTURES / fixture_name, input_file)
-
-    runner = CliRunner()
-    with (
-        patch(
-            "dub_chunk.tts.requests.post",
-            side_effect=_make_tts_mock(captures),
-        ),
-        patch(
-            "dub_chunk.stitch.subprocess.run",
-            side_effect=_make_subprocess_mock(captures),
-        ),
-    ):
-        result = runner.invoke(main, cli_args(input_file))
-
-    return result, input_file
-
-
-def _extract_concat_filenames(captures):
-    """Parse concat.txt content into a list of WAV filenames."""
-    content = captures["concat_file_content"]
-    assert content is not None, "concat.txt was not captured"
-    lines = [line for line in content.strip().split("\n") if line]
-    return [Path(line.split("'")[1]).name for line in lines]
+def _split_subprocess_calls(captures):
+    """Split captured subprocess calls into ffmpeg and ffprobe lists."""
+    ffmpeg = [c for c in captures["subprocess_calls"] if c[0] == "ffmpeg"]
+    ffprobe = [c for c in captures["subprocess_calls"] if c[0] == "ffprobe"]
+    return ffmpeg, ffprobe
 
 
 def _assert_tts_calls(captures, expected_paragraphs):
@@ -359,27 +513,18 @@ def _assert_clip_files(clips_dir, expected_paragraphs):
 def _assert_ffmpeg_conversions(ffmpeg_calls, expected_paragraphs):
     """Assert clip-to-WAV conversion calls have correct argv."""
     n = len(expected_paragraphs)
-    conversion_calls = ffmpeg_calls[:n]
-
     for i, (cmd, expected) in enumerate(
-        zip(conversion_calls, expected_paragraphs)
+        zip(ffmpeg_calls[:n], expected_paragraphs)
     ):
         pid = expected["id"]
-        assert cmd[0:3] == ["ffmpeg", "-y", "-i"], (
-            f"Conversion {i}: wrong prefix"
-        )
+        assert cmd[0:3] == ["ffmpeg", "-y", "-i"]
         assert Path(cmd[3]).name == f"p{pid:04d}.mp3", (
-            f"Conversion {i}: expected input p{pid:04d}.mp3, "
-            f"got {Path(cmd[3]).name}"
+            f"Conversion {i}: expected p{pid:04d}.mp3, got {Path(cmd[3]).name}"
         )
-        assert cmd[4:8] == ["-ar", "44100", "-ac", "1"], (
-            f"Conversion {i}: wrong audio params"
-        )
-        assert cmd[8:10] == ["-sample_fmt", "s16"], (
-            f"Conversion {i}: wrong sample format"
-        )
+        assert cmd[4:8] == ["-ar", "44100", "-ac", "1"]
+        assert cmd[8:10] == ["-sample_fmt", "s16"]
         assert Path(cmd[10]).name == f"clip_{pid:04d}.wav", (
-            f"Conversion {i}: expected output clip_{pid:04d}.wav, "
+            f"Conversion {i}: expected clip_{pid:04d}.wav, "
             f"got {Path(cmd[10]).name}"
         )
 
@@ -397,6 +542,19 @@ def _assert_ffmpeg_concat(concat_cmd, output_name):
     assert Path(concat_cmd[14]).name == output_name
 
 
+def _assert_concat_filenames(captures, expected_order):
+    """Assert concat.txt lists WAV files in the expected order."""
+    content = captures["concat_file_content"]
+    assert content is not None, "concat.txt was not captured"
+    lines = [line for line in content.strip().split("\n") if line]
+    filenames = [Path(line.split("'")[1]).name for line in lines]
+    assert filenames == expected_order, (
+        f"concat.txt mismatch.\n"
+        f"  Expected: {expected_order}\n"
+        f"  Got:      {filenames}"
+    )
+
+
 def _assert_ffprobe(ffprobe_calls, output_name):
     """Assert the ffprobe duration call has correct argv."""
     assert len(ffprobe_calls) == 1, (
@@ -408,237 +566,3 @@ def _assert_ffprobe(ffprobe_calls, output_name):
     assert cmd[3:5] == ["-show_entries", "format=duration"]
     assert cmd[5:7] == ["-of", "json"]
     assert Path(cmd[7]).name == output_name
-
-
-# ======================================================================
-# Test: sample_labeled.txt (8 paragraphs, 2 speakers, alternating)
-# ======================================================================
-
-
-class TestFullGenerateLabeledPipeline:
-    """Labeled format: 8 paragraphs, alternating Dr. Jung / Eissler."""
-
-    def test_boundary_contracts(self, tmp_path):
-        captures = {
-            "tts_calls": [],
-            "subprocess_calls": [],
-            "concat_file_content": None,
-        }
-        output_name = "dubbed_output.mp3"
-
-        result, input_file = _run_pipeline(
-            tmp_path,
-            "sample_labeled.txt",
-            lambda f: [
-                "generate", str(f),
-                "--voice", "Dr. Jung=jung_voice_id",
-                "--voice", "Eissler=eissler_voice_id",
-                "--api-key", "test_api_key_123",
-                "--output", str(tmp_path / output_name),
-                "--keep-clips", "--rate-limit", "0",
-            ],
-            captures,
-        )
-
-        assert result.exit_code == 0, (
-            f"CLI failed:\n{result.output}"
-        )
-
-        # -- TTS API calls: 8 paragraphs, exact text ---
-        _assert_tts_calls(captures, EXPECTED_LABELED)
-
-        # -- Clip files on disk ---
-        clips_dir = tmp_path / "sample_labeled_clips"
-        _assert_clip_files(clips_dir, EXPECTED_LABELED)
-
-        # -- ffmpeg: 8 conversions + 1 concat = 9 calls ---
-        ffmpeg_calls = [
-            c for c in captures["subprocess_calls"] if c[0] == "ffmpeg"
-        ]
-        ffprobe_calls = [
-            c for c in captures["subprocess_calls"] if c[0] == "ffprobe"
-        ]
-        assert len(ffmpeg_calls) == 9, (
-            f"Expected 9 ffmpeg calls, got {len(ffmpeg_calls)}"
-        )
-
-        _assert_ffmpeg_conversions(ffmpeg_calls, EXPECTED_LABELED)
-        _assert_ffmpeg_concat(ffmpeg_calls[8], output_name)
-
-        # -- concat.txt: 1 clip + 7 × (silence + clip) = 15 entries ---
-        # All speaker switches (0.8s pause each)
-        filenames = _extract_concat_filenames(captures)
-        expected_concat = [
-            "clip_0001.wav",
-            "silence_0002.wav", "clip_0002.wav",
-            "silence_0003.wav", "clip_0003.wav",
-            "silence_0004.wav", "clip_0004.wav",
-            "silence_0005.wav", "clip_0005.wav",
-            "silence_0006.wav", "clip_0006.wav",
-            "silence_0007.wav", "clip_0007.wav",
-            "silence_0008.wav", "clip_0008.wav",
-        ]
-        assert filenames == expected_concat, (
-            f"concat.txt mismatch.\n"
-            f"  Expected: {expected_concat}\n"
-            f"  Got:      {filenames}"
-        )
-
-        # -- ffprobe ---
-        _assert_ffprobe(ffprobe_calls, output_name)
-
-        # -- CLI output ---
-        assert "Done!" in result.output
-        assert "42.5" in result.output
-
-
-# ======================================================================
-# Test: sample.srt (6 paragraphs, 2 speakers, alternating)
-# ======================================================================
-
-
-class TestFullGenerateSrtPipeline:
-    """SRT format: 6 paragraphs, alternating JUNG / EISSLER."""
-
-    def test_boundary_contracts(self, tmp_path):
-        captures = {
-            "tts_calls": [],
-            "subprocess_calls": [],
-            "concat_file_content": None,
-        }
-        output_name = "dubbed_output.mp3"
-
-        result, input_file = _run_pipeline(
-            tmp_path,
-            "sample.srt",
-            lambda f: [
-                "generate", str(f),
-                "--voice", "JUNG=jung_voice_id",
-                "--voice", "EISSLER=eissler_voice_id",
-                "--api-key", "test_api_key_123",
-                "--output", str(tmp_path / output_name),
-                "--keep-clips", "--rate-limit", "0",
-            ],
-            captures,
-        )
-
-        assert result.exit_code == 0, (
-            f"CLI failed:\n{result.output}"
-        )
-
-        # -- TTS API calls: 6 paragraphs, exact text ---
-        _assert_tts_calls(captures, EXPECTED_SRT)
-
-        # -- Clip files on disk ---
-        clips_dir = tmp_path / "sample_clips"
-        _assert_clip_files(clips_dir, EXPECTED_SRT)
-
-        # -- ffmpeg: 6 conversions + 1 concat = 7 calls ---
-        ffmpeg_calls = [
-            c for c in captures["subprocess_calls"] if c[0] == "ffmpeg"
-        ]
-        ffprobe_calls = [
-            c for c in captures["subprocess_calls"] if c[0] == "ffprobe"
-        ]
-        assert len(ffmpeg_calls) == 7, (
-            f"Expected 7 ffmpeg calls, got {len(ffmpeg_calls)}"
-        )
-
-        _assert_ffmpeg_conversions(ffmpeg_calls, EXPECTED_SRT)
-        _assert_ffmpeg_concat(ffmpeg_calls[6], output_name)
-
-        # -- concat.txt: 1 clip + 5 × (silence + clip) = 11 entries ---
-        # All speaker switches (0.8s pause each)
-        filenames = _extract_concat_filenames(captures)
-        expected_concat = [
-            "clip_0001.wav",
-            "silence_0002.wav", "clip_0002.wav",
-            "silence_0003.wav", "clip_0003.wav",
-            "silence_0004.wav", "clip_0004.wav",
-            "silence_0005.wav", "clip_0005.wav",
-            "silence_0006.wav", "clip_0006.wav",
-        ]
-        assert filenames == expected_concat, (
-            f"concat.txt mismatch.\n"
-            f"  Expected: {expected_concat}\n"
-            f"  Got:      {filenames}"
-        )
-
-        # -- ffprobe ---
-        _assert_ffprobe(ffprobe_calls, output_name)
-
-        # -- CLI output ---
-        assert "Done!" in result.output
-        assert "42.5" in result.output
-
-
-# ======================================================================
-# Test: sample_plain.txt (7 paragraphs → 1 after consolidation)
-# ======================================================================
-
-
-class TestFullGeneratePlainPipeline:
-    """Plain text: 7 paragraphs, all same speaker → consolidated to 1."""
-
-    def test_boundary_contracts(self, tmp_path):
-        captures = {
-            "tts_calls": [],
-            "subprocess_calls": [],
-            "concat_file_content": None,
-        }
-        output_name = "dubbed_output.mp3"
-
-        result, input_file = _run_pipeline(
-            tmp_path,
-            "sample_plain.txt",
-            lambda f: [
-                "generate", str(f),
-                "--format", "plain",
-                "--voice", "Speaker=narrator_voice_id",
-                "--api-key", "test_api_key_123",
-                "--output", str(tmp_path / output_name),
-                "--keep-clips", "--rate-limit", "0",
-            ],
-            captures,
-        )
-
-        assert result.exit_code == 0, (
-            f"CLI failed:\n{result.output}"
-        )
-
-        # -- TTS API calls: 1 paragraph (all merged) ---
-        _assert_tts_calls(captures, EXPECTED_PLAIN)
-
-        # -- Clip files on disk ---
-        clips_dir = tmp_path / "sample_plain_clips"
-        _assert_clip_files(clips_dir, EXPECTED_PLAIN)
-
-        # -- ffmpeg: 1 conversion + 1 concat = 2 calls ---
-        ffmpeg_calls = [
-            c for c in captures["subprocess_calls"] if c[0] == "ffmpeg"
-        ]
-        ffprobe_calls = [
-            c for c in captures["subprocess_calls"] if c[0] == "ffprobe"
-        ]
-        assert len(ffmpeg_calls) == 2, (
-            f"Expected 2 ffmpeg calls, got {len(ffmpeg_calls)}"
-        )
-
-        _assert_ffmpeg_conversions(ffmpeg_calls, EXPECTED_PLAIN)
-        _assert_ffmpeg_concat(ffmpeg_calls[1], output_name)
-
-        # -- concat.txt: just 1 clip (no pauses — single paragraph) ---
-        filenames = _extract_concat_filenames(captures)
-        expected_concat = ["clip_0001.wav"]
-        assert filenames == expected_concat, (
-            f"concat.txt mismatch.\n"
-            f"  Expected: {expected_concat}\n"
-            f"  Got:      {filenames}"
-        )
-
-        # -- ffprobe ---
-        _assert_ffprobe(ffprobe_calls, output_name)
-
-        # -- CLI output ---
-        assert "Done!" in result.output
-        assert "42.5" in result.output

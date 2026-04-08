@@ -504,6 +504,104 @@ These tests are FAST (no I/O, no API calls, no ffmpeg) and form the backbone of 
 
 ---
 
+## Boundary Contract Tests (Outbound I/O Mocking)
+
+For pipelines that talk to external systems (APIs, subprocesses), add a **boundary contract
+test** that runs the full pipeline end-to-end but mocks ONLY at the outbound I/O boundary:
+
+```
+    ┌─────────────────────────────────────────────────────┐
+    │  Real code (all of it)                               │
+    │  CLI → parse → consolidate → clean → timing → TTS   │
+    │  loop → stitch orchestration                         │
+    │                                                      │
+    │         ┌──── MOCK BOUNDARY ────┐                   │
+    │         │  requests.post  ──→ ✗  │  ← intercept HTTP │
+    │         │  subprocess.run ──→ ✗  │  ← intercept CLI  │
+    │         └───────────────────────┘                   │
+    └─────────────────────────────────────────────────────┘
+```
+
+**Key principle:** Mock at the **last mile** — the HTTP call, the subprocess invocation —
+not at internal function boundaries. Everything else runs for real. This catches wiring
+bugs that unit tests miss, because the full pipeline executes.
+
+**What to assert at each boundary:**
+
+| Boundary | Assert |
+|----------|--------|
+| HTTP API (e.g. TTS) | Exact URL, headers, request body (the EXACT text after pipeline processing), model params |
+| Subprocess (e.g. ffmpeg) | Exact `argv` list, call count, file ordering (e.g. concat.txt content) |
+| Subprocess (e.g. ffprobe) | Exact `argv` list, that the correct output file is probed |
+| Files written to disk | Clip files exist with expected content at expected paths |
+
+**This is NOT a unit test** — it's a deliberate trade-off. If the pipeline changes what it
+sends to the API or how it invokes ffmpeg, this test breaks. That breakage is expected and
+desired — it forces you to review whether the change was intentional.
+
+**Mock side effects to keep the pipeline running:**
+- HTTP mock: return fake response bytes (e.g., `b"FAKE_MP3_BYTES"`)
+- ffmpeg concat mock: create a dummy output file (so downstream ffprobe path-check passes)
+- ffmpeg concat mock: read `concat.txt` content before temp cleanup destroys it
+- ffprobe mock: return fake duration JSON
+
+**Pattern: expected data as the spec.** Define the exact expected strings (what the pipeline
+should produce after parse → consolidate → clean) as module-level constants. These are the
+contract. If the fixture or the pipeline changes, the constants must be updated explicitly.
+
+```python
+EXPECTED_PARAGRAPHS = [
+    {
+        "id": 1,
+        "speaker": "Dr. Jung",
+        "voice_id": "jung_voice_id",
+        "text": "The unconscious is not just a repository...",  # EXACT post-pipeline text
+    },
+    ...
+]
+```
+
+**One boundary contract test per input format** — each format (SRT, labeled, plain text)
+exercises a different parser path, different consolidation behavior (e.g., plain text merges
+all paragraphs into one), and different speaker/voice mappings.
+
+---
+
+## Newspaper File Structure for Test Files
+
+Test files should read **top-to-bottom like a newspaper** — most important things first,
+supporting details below. The reader (future you, or a teammate debugging a failure) should
+see the *scenarios* before the *plumbing*.
+
+```
+    ┌──────────────────────────────────────────────┐
+    │  1. SCENARIOS (test classes/methods)           │  ← Read these first
+    │     What is being tested? What's the journey?  │
+    ├──────────────────────────────────────────────┤
+    │  2. EXPECTED DATA (constants/specs)             │  ← The contract
+    │     Exact strings, exact structures              │
+    ├──────────────────────────────────────────────┤
+    │  3. PLUMBING (helpers, mocks, fixtures)         │  ← How it works
+    │     Mock factories, assertion helpers             │
+    └──────────────────────────────────────────────┘
+```
+
+**Why this works:** Python doesn't care about definition order for module-level
+functions and constants — they're all available by the time pytest calls the test methods.
+So we can structure for the *reader*, not the *interpreter*.
+
+**Anti-pattern:** Putting 200 lines of helper functions and expected data constants at the
+top, burying the actual test scenarios at line 300. The reader has to scroll past plumbing
+to find what the file actually tests.
+
+**When to extract helpers vs inline:** If assertion logic is shared across 3+ tests,
+extract a well-named helper (e.g., `_assert_tts_calls`, `_assert_ffmpeg_conversions`).
+The helper name should describe *what* it asserts, not *how*. But prefer duplication
+over the wrong abstraction — if the extracted helper obscures what's being tested,
+inline it instead.
+
+---
+
 ## Compound Rules
 
 - `OI-001`: Outer test runs ONCE to see red, then drop into inner loop. Don't re-run outer test until inner loop is complete.
@@ -516,6 +614,8 @@ These tests are FAST (no I/O, no API calls, no ffmpeg) and form the backbone of 
 - `OI-008`: One WHEN per scenario. No compound actions. No implementation-specific language.
 - `OI-009`: Contract tests for every boundary: input (parsers), transform (consolidate/clean/timing), output (stitch/TTS).
 - `OI-010`: Test pyramid discipline — 1-2 happy paths at E2E, exhaustive edge cases at unit level.
+- `OI-011`: Boundary contract tests mock at the outbound I/O boundary only (HTTP, subprocess), never at internal function boundaries. The full pipeline runs for real. Assert exact text, exact argv, exact call counts. Breakage on pipeline changes is expected and desired.
+- `OI-012`: Test files follow newspaper structure — scenarios at the top, expected data in the middle, plumbing at the bottom. Structure for the reader, not the interpreter.
 
 ---
 
