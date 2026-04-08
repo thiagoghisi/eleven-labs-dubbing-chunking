@@ -6,16 +6,21 @@ PYTHON := $(VENV)/bin/python3
 PIP := $(VENV)/bin/pip
 CLI := $(VENV)/bin/dub-chunk
 
-.PHONY: setup venv deps check test clean help parse estimate dry-run
+.PHONY: setup setup-dev venv deps deps-dev check test clean help parse estimate dry-run
 
-# ─── Primary target ───────────────────────────────────────────────
+# ─── Primary targets ──────────────────────────────────────────────
 
-setup: venv deps check  ## Full setup (run this first)
+setup: venv deps check  ## Full setup for users (run this first)
 	@echo ""
 	@echo "✅ Setup complete! Try it:"
 	@echo "   $(CLI) parse tests/fixtures/sample_labeled.txt"
 	@echo "   $(CLI) estimate tests/fixtures/sample_labeled.txt"
 	@echo "   $(CLI) generate transcript.txt --voice default=YOUR_VOICE_ID --dry-run"
+	@echo ""
+
+setup-dev: venv deps-dev check  ## Setup for development (editable install, live code reloading)
+	@echo ""
+	@echo "✅ Dev setup complete! Code changes take effect immediately."
 	@echo ""
 
 # ─── Individual targets ──────────────────────────────────────────
@@ -29,11 +34,18 @@ $(PYTHON):
 	@echo "  ✅ venv created"
 	@echo ""
 
-deps: $(PYTHON)  ## Install Python dependencies + CLI
+deps: $(PYTHON)  ## Install dependencies + CLI (copies code into venv)
 	@echo "=== Installing dependencies ==="
 	$(PIP) install -r requirements.txt -q
-	$(PIP) install -e . -q
+	$(PIP) install . -q
 	@echo "  ✅ dub-chunk installed"
+	@echo ""
+
+deps-dev: $(PYTHON)  ## Install dependencies + CLI in editable mode (symlinks to source)
+	@echo "=== Installing dependencies (editable) ==="
+	$(PIP) install -r requirements.txt -q
+	$(PIP) install -e . -q
+	@echo "  ✅ dub-chunk installed (editable — code changes take effect immediately)"
 	@echo ""
 
 check:  ## Verify all dependencies are installed
@@ -55,13 +67,13 @@ test:  ## Run tests
 
 # ─── Quick shortcuts ─────────────────────────────────────────────
 
-parse:  ## Parse sample transcript: make parse FILE=path/to/file.txt
+parse:  ## Parse transcript: make parse FILE=path/to/file.txt
 	$(CLI) parse $(FILE)
 
 estimate:  ## Estimate cost: make estimate FILE=path/to/file.txt
 	$(CLI) estimate $(FILE)
 
-dry-run:  ## Dry run generation: make dry-run FILE=path/to/file.txt VOICE="default=VOICE_ID"
+dry-run:  ## Dry run: make dry-run FILE=path/to/file.txt VOICE="default=VOICE_ID"
 	$(CLI) generate $(FILE) --voice $(VOICE) --dry-run
 
 # ─── Cleanup ─────────────────────────────────────────────────────
@@ -73,4 +85,4 @@ clean:  ## Remove venv and build artifacts
 	@echo "  ✅ Clean"
 
 help:  ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
