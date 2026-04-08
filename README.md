@@ -264,6 +264,15 @@ Input transcript
 5. **Generate**: One ElevenLabs API call per paragraph, with resume support
 6. **Stitch**: ffmpeg concatenates clips with silence gaps into a single MP3
 
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for C4 diagrams covering:
+- **Level 1 — System Context**: users, ElevenLabs API, ffmpeg
+- **Level 2 — Container**: CLI layer, processing pipeline, audio generation
+- **Level 3 — Component**: all 12 modules with line counts and responsibilities
+- **Data Flow**: transcript in, MP3 out, every step in between
+- **Use Cases**: YouTube dubbing, podcast dubbing, audiobooks, historical recordings, pacing iteration
+
 ## License
 
 MIT
