@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dub-chunk"
+version = "0.1.0"
+description = "Chunked ElevenLabs voice dubbing from transcripts"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "requests>=2.28",
+]
+
+[project.scripts]
+dub-chunk = "dub_chunk.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

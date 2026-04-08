@@ -1,0 +1,31 @@
+1
+00:00:01,000 --> 00:00:08,500
+[JUNG] The unconscious is not just a repository of repressed material. It is a living system.
+
+2
+00:00:09,200 --> 00:00:14,800
+[JUNG] It constantly produces symbols and images that compensate for the one-sidedness of consciousness.
+
+3
+00:00:16,000 --> 00:00:22,400
+[EISSLER] That is a remarkable claim. How would you distinguish between what is merely repressed and what is genuinely creative?
+
+4
+00:00:23,500 --> 00:00:30,000
+[JUNG] The repressed material is personal. It belongs to the individual history.
+
+5
+00:00:30,500 --> 00:00:38,200
+[JUNG] But beneath that lies the collective unconscious, which contains the archetypes shared by all of humanity.
+
+6
+00:00:39,000 --> 00:00:45,600
+[EISSLER] And these archetypes manifest in dreams?
+
+7
+00:00:46,200 --> 00:00:55,800
+[JUNG] In dreams, yes, but also in myths, in fairy tales, in the spontaneous fantasies of psychotic patients.
+
+8
+00:00:56,500 --> 00:01:02,000
+[EISSLER] Some critics have argued that the collective unconscious is unfalsifiable. How do you respond?
