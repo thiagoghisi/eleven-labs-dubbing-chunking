@@ -14,7 +14,7 @@ from dub_chunk.clean import clean_for_tts
 from dub_chunk.consolidate import consolidate
 from dub_chunk.models import Paragraph, VoiceConfig, TimingEntry
 from dub_chunk.parsers import parse_labeled_text, parse_srt, parse_plain_text
-from dub_chunk.timing import build_timing_map
+from dub_chunk.timing import build_timing_map, build_srt_timing_map
 from dub_chunk.tts import generate_clip, estimate_cost
 from dub_chunk.stitch import stitch_audio, check_ffmpeg, get_clip_duration
 
@@ -157,6 +157,7 @@ def main():
 @click.option("--pause-switch", type=float, default=0.8, help="Silence (seconds) on speaker switch.")
 @click.option("--total-duration", type=float, default=None, help="Target total duration in seconds (for pacing).")
 @click.option("--no-consolidate", is_flag=True, help="Skip paragraph merging.")
+@click.option("--match-srt-timing", is_flag=True, help="Adjust speed per paragraph to fit original SRT timing windows. SRT input only.")
 @click.option("--resume", is_flag=True, help="Skip existing clips on disk.")
 @click.option("--dry-run", is_flag=True, help="Show timing map without calling the API.")
 @click.option("--limit", type=int, default=None, help="Process first N paragraphs only.")
@@ -178,6 +179,7 @@ def generate(
     pause_switch: float,
     total_duration: float | None,
     no_consolidate: bool,
+    match_srt_timing: bool,
     resume: bool,
     dry_run: bool,
     limit: int | None,
@@ -225,23 +227,38 @@ def generate(
         p.text = clean_for_tts(p.text)
 
     # --- Step 4: Build timing map ---
-    timing_map: list[TimingEntry] = build_timing_map(
-        paragraphs,
-        pause_same=pause_same,
-        pause_switch=pause_switch,
-        total_duration=total_duration or 0,
-    )
+    srt_speeds: list[float] | None = None
+
+    if match_srt_timing:
+        if detected_fmt != "srt":
+            raise click.ClickException(
+                "--match-srt-timing requires SRT input. "
+                f"Detected format is '{detected_fmt}'."
+            )
+        timing_map, srt_speeds, srt_warnings = build_srt_timing_map(paragraphs)
+        click.echo(f"SRT timing: matching original durations (speed range 0.7x–1.2x)")
+        for warn in srt_warnings:
+            click.echo(f"  ⚠ {warn}", err=True)
+    else:
+        timing_map: list[TimingEntry] = build_timing_map(
+            paragraphs,
+            pause_same=pause_same,
+            pause_switch=pause_switch,
+            total_duration=total_duration or 0,
+        )
 
     if verbose or dry_run:
         total_chars = sum(len(e.paragraph.text) for e in timing_map)
         click.echo(f"\nTiming map ({len(timing_map)} entries, {total_chars:,} chars):")
-        for entry in timing_map:
+        for i, entry in enumerate(timing_map):
             p = entry.paragraph
             preview = p.text[:60] + ("..." if len(p.text) > 60 else "")
+            speed_info = f" speed={srt_speeds[i]:.2f}x" if srt_speeds else ""
             click.echo(
                 f"  [{p.id:3d}] {p.speaker:<15s} "
                 f"pause={entry.pause_before:.2f}s "
-                f"est={entry.estimated_duration:.1f}s "
+                f"est={entry.estimated_duration:.1f}s"
+                f"{speed_info} "
                 f"| {preview}"
             )
 
@@ -283,8 +300,20 @@ def generate(
             p.speaker, voice_map, speed_map, stability, similarity, style,
         )
 
+        # Override speed with SRT-computed value when matching timing
+        if srt_speeds is not None:
+            voice_cfg = VoiceConfig(
+                voice_id=voice_cfg.voice_id,
+                speed=srt_speeds[i],
+                stability=voice_cfg.stability,
+                similarity_boost=voice_cfg.similarity_boost,
+                style=voice_cfg.style,
+                use_speaker_boost=voice_cfg.use_speaker_boost,
+            )
+
         if verbose:
-            click.echo(f"  [{p.id}] Generating: {p.speaker} ({len(p.text)} chars)")
+            speed_str = f" @ {voice_cfg.speed:.2f}x" if srt_speeds else ""
+            click.echo(f"  [{p.id}] Generating: {p.speaker} ({len(p.text)} chars{speed_str})")
 
         generate_clip(
             text=p.text,

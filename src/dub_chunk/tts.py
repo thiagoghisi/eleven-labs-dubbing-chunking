@@ -66,6 +66,7 @@ def generate_clip(
             "similarity_boost": voice_config.similarity_boost,
             "style": voice_config.style,
             "use_speaker_boost": voice_config.use_speaker_boost,
+            "speed": voice_config.speed,
         },
     }
 

@@ -10,10 +10,19 @@ class Paragraph:
     speaker: str
     text: str
     word_count: int = 0
+    original_start: float | None = None
+    original_end: float | None = None
 
     def __post_init__(self):
         if not self.word_count:
             self.word_count = len(self.text.split())
+
+    @property
+    def original_duration(self) -> float | None:
+        """Duration of the original SRT window in seconds, if available."""
+        if self.original_start is not None and self.original_end is not None:
+            return self.original_end - self.original_start
+        return None
 
 
 @dataclass

@@ -46,7 +46,10 @@ def consolidate(
     # ------------------------------------------------------------------
     result: list[Paragraph] = []
     for idx, p in enumerate(working, start=1):
-        result.append(Paragraph(id=idx, speaker=p.speaker, text=p.text))
+        result.append(Paragraph(
+            id=idx, speaker=p.speaker, text=p.text,
+            original_start=p.original_start, original_end=p.original_end,
+        ))
     return result
 
 
@@ -98,11 +101,13 @@ def _merge_same_speaker(paragraphs: list[Paragraph]) -> list[Paragraph]:
 
     for p in paragraphs[1:]:
         if p.speaker == current.speaker:
-            # Combine text with a single space
+            # Combine text with a single space; extend timing to cover both spans
             current = Paragraph(
                 id=current.id,
                 speaker=current.speaker,
                 text=current.text.rstrip() + " " + p.text.lstrip(),
+                original_start=current.original_start,
+                original_end=p.original_end if p.original_end is not None else current.original_end,
             )
         else:
             merged.append(current)

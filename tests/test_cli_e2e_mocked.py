@@ -186,6 +186,113 @@ class TestFullGeneratePlainPipeline:
 
 
 # ======================================================================
+# Test: sample.srt with --match-srt-timing (per-paragraph speed)
+# ======================================================================
+
+
+class TestFullGenerateSrtWithTimingSync:
+    """SRT format with --match-srt-timing: per-paragraph speed adjustment.
+
+    Each paragraph gets a computed speed to fit its original SRT window.
+    Pauses come from SRT gaps (next_start - prev_end).
+    """
+
+    def test_boundary_contracts(self, tmp_path):
+        captures = _new_captures()
+        output_name = "dubbed_output.mp3"
+
+        result, input_file = _run_pipeline(
+            tmp_path,
+            "sample.srt",
+            lambda f: [
+                "generate", str(f),
+                "--voice", "JUNG=jung_voice_id",
+                "--voice", "EISSLER=eissler_voice_id",
+                "--api-key", "test_api_key_123",
+                "--output", str(tmp_path / output_name),
+                "--match-srt-timing",
+                "--keep-clips", "--rate-limit", "0",
+            ],
+            captures,
+        )
+
+        assert result.exit_code == 0, f"CLI failed:\n{result.output}"
+
+        # -- TTS API calls: 6 paragraphs with per-paragraph speed ---
+        _assert_tts_calls_with_speeds(captures, EXPECTED_SRT_TIMED)
+
+        # -- Clip files on disk ---
+        clips_dir = tmp_path / "sample_clips"
+        _assert_clip_files(clips_dir, EXPECTED_SRT_TIMED)
+
+        # -- ffmpeg: 6 conversions + 1 concat = 7 calls ---
+        ffmpeg_calls, ffprobe_calls = _split_subprocess_calls(captures)
+        assert len(ffmpeg_calls) == 7
+        _assert_ffmpeg_conversions(ffmpeg_calls, EXPECTED_SRT_TIMED)
+        _assert_ffmpeg_concat(ffmpeg_calls[6], output_name)
+
+        # -- concat.txt: pauses from SRT gaps ---
+        # Para 1 starts at 1.0s → pause = 1.0s → silence WAV
+        # All paragraphs have SRT gaps → all get silence + clip
+        _assert_concat_filenames(captures, [
+            "silence_0001.wav", "clip_0001.wav",
+            "silence_0002.wav", "clip_0002.wav",
+            "silence_0003.wav", "clip_0003.wav",
+            "silence_0004.wav", "clip_0004.wav",
+            "silence_0005.wav", "clip_0005.wav",
+            "silence_0006.wav", "clip_0006.wav",
+        ])
+
+        # -- ffprobe + CLI output ---
+        _assert_ffprobe(ffprobe_calls, output_name)
+        assert "Done!" in result.output
+
+    def test_warnings_shown_for_clamped_paragraphs(self, tmp_path):
+        """Paragraph 4 (EISSLER, 'And these archetypes...') needs 0.36x
+        but is clamped to 0.7x — warning should appear in CLI stderr."""
+        captures = _new_captures()
+
+        result, _ = _run_pipeline(
+            tmp_path,
+            "sample.srt",
+            lambda f: [
+                "generate", str(f),
+                "--voice", "JUNG=jung_voice_id",
+                "--voice", "EISSLER=eissler_voice_id",
+                "--api-key", "test_api_key_123",
+                "--output", str(tmp_path / "out.mp3"),
+                "--match-srt-timing",
+                "--keep-clips", "--rate-limit", "0",
+            ],
+            captures,
+        )
+
+        assert result.exit_code == 0
+        # Warning should mention the clamped paragraph
+        combined = (result.output or "") + (result.stderr or "")
+        assert "capped" in combined.lower()
+        assert "Paragraph 4" in combined
+
+    def test_rejects_non_srt_input(self, tmp_path):
+        captures = _new_captures()
+        result, _ = _run_pipeline(
+            tmp_path,
+            "sample_labeled.txt",
+            lambda f: [
+                "generate", str(f),
+                "--voice", "Dr. Jung=fake",
+                "--voice", "Eissler=fake",
+                "--api-key", "test_key",
+                "--match-srt-timing",
+                "--dry-run",
+            ],
+            captures,
+        )
+        assert result.exit_code != 0
+        assert "srt" in result.output.lower()
+
+
+# ======================================================================
 # Expected pipeline outputs — the spec
 # ======================================================================
 # Each entry is the EXACT text that should arrive at the TTS API boundary
@@ -367,6 +474,52 @@ EXPECTED_PLAIN = [
 ]
 
 
+EXPECTED_SRT_TIMED = [
+    {
+        "id": 1,
+        "speaker": "JUNG",
+        "voice_id": "jung_voice_id",
+        "speed": 0.8116,
+        "text": EXPECTED_SRT[0]["text"],
+    },
+    {
+        "id": 2,
+        "speaker": "EISSLER",
+        "voice_id": "eissler_voice_id",
+        "speed": 1.1875,
+        "text": EXPECTED_SRT[1]["text"],
+    },
+    {
+        "id": 3,
+        "speaker": "JUNG",
+        "voice_id": "jung_voice_id",
+        "speed": 0.7347,
+        "text": EXPECTED_SRT[2]["text"],
+    },
+    {
+        "id": 4,
+        "speaker": "EISSLER",
+        "voice_id": "eissler_voice_id",
+        "speed": 0.7,  # clamped from 0.36
+        "text": EXPECTED_SRT[3]["text"],
+    },
+    {
+        "id": 5,
+        "speaker": "JUNG",
+        "voice_id": "jung_voice_id",
+        "speed": 0.7083,
+        "text": EXPECTED_SRT[4]["text"],
+    },
+    {
+        "id": 6,
+        "speaker": "EISSLER",
+        "voice_id": "eissler_voice_id",
+        "speed": 1.0182,
+        "text": EXPECTED_SRT[5]["text"],
+    },
+]
+
+
 # ======================================================================
 # Plumbing — mock factories and assertion helpers
 # ======================================================================
@@ -497,6 +650,7 @@ def _assert_tts_calls(captures, expected_paragraphs):
             "similarity_boost": 0.80,
             "style": 0.35,
             "use_speaker_boost": True,
+            "speed": 1.0,
         }, f"TTS call {i}: wrong voice_settings"
 
 
@@ -553,6 +707,43 @@ def _assert_concat_filenames(captures, expected_order):
         f"  Expected: {expected_order}\n"
         f"  Got:      {filenames}"
     )
+
+
+def _assert_tts_calls_with_speeds(captures, expected_paragraphs):
+    """Assert TTS API calls match expected paragraphs with per-paragraph speed."""
+    tts_calls = captures["tts_calls"]
+
+    assert len(tts_calls) == len(expected_paragraphs), (
+        f"Expected {len(expected_paragraphs)} TTS calls, "
+        f"got {len(tts_calls)}"
+    )
+
+    for i, (call, expected) in enumerate(
+        zip(tts_calls, expected_paragraphs)
+    ):
+        assert call["url"] == (
+            f"https://api.elevenlabs.io/v1/text-to-speech/"
+            f"{expected['voice_id']}"
+        ), f"TTS call {i}: unexpected URL"
+
+        assert call["api_key"] == "test_api_key_123"
+        assert call["model_id"] == "eleven_multilingual_v2"
+
+        assert call["text"] == expected["text"], (
+            f"TTS call {i} (paragraph {expected['id']}, "
+            f"{expected['speaker']}): text mismatch.\n"
+            f"  Expected: {expected['text']!r}\n"
+            f"  Got:      {call['text']!r}"
+        )
+
+        actual_speed = call["voice_settings"]["speed"]
+        expected_speed = expected["speed"]
+        assert abs(actual_speed - expected_speed) < 0.001, (
+            f"TTS call {i} (paragraph {expected['id']}, "
+            f"{expected['speaker']}): speed mismatch.\n"
+            f"  Expected: {expected_speed}\n"
+            f"  Got:      {actual_speed}"
+        )
 
 
 def _assert_ffprobe(ffprobe_calls, output_name):

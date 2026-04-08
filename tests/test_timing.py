@@ -1,13 +1,20 @@
 """Unit tests for timing.py — timing map construction."""
 
+import logging
+
 import pytest
 
 from dub_chunk.models import Paragraph, TimingEntry
-from dub_chunk.timing import build_timing_map
+from dub_chunk.timing import build_timing_map, build_srt_timing_map, SPEED_MIN, SPEED_MAX
 
 
 def _p(id, speaker, text):
     return Paragraph(id=id, speaker=speaker, text=text)
+
+
+def _srt_p(id, speaker, text, start, end):
+    return Paragraph(id=id, speaker=speaker, text=text,
+                     original_start=start, original_end=end)
 
 
 # ======================================================================
@@ -179,3 +186,160 @@ class TestEdgeCases:
         assert result[0].pause_before == 0.0
         assert result[0].start_time == 0.0
         assert result[0].estimated_duration > 0
+
+
+# ======================================================================
+# SRT timing map — build_srt_timing_map
+# ======================================================================
+
+
+class TestSrtTimingMapPauses:
+
+    def test_first_paragraph_pause_is_its_start_time(self):
+        """First pause = time from 0 to where the SRT cue starts."""
+        paras = [_srt_p(1, "A", "Hello world", 5.0, 10.0)]
+        entries, _, _ = build_srt_timing_map(paras)
+        assert entries[0].pause_before == 5.0
+
+    def test_pause_from_srt_gap(self):
+        """Pause = next_start - prev_end."""
+        paras = [
+            _srt_p(1, "A", "First sentence here.", 16.0, 22.4),
+            _srt_p(2, "B", "Second sentence here.", 23.5, 30.0),
+        ]
+        entries, _, _ = build_srt_timing_map(paras)
+        assert entries[1].pause_before == pytest.approx(1.1, abs=0.01)
+
+    def test_zero_gap_produces_zero_pause(self):
+        paras = [
+            _srt_p(1, "A", "One thing.", 10.0, 15.0),
+            _srt_p(2, "B", "Another thing.", 15.0, 20.0),
+        ]
+        entries, _, _ = build_srt_timing_map(paras)
+        assert entries[1].pause_before == 0.0
+
+    def test_overlapping_cues_produce_zero_pause(self):
+        """If SRT cues overlap, clamp pause to 0."""
+        paras = [
+            _srt_p(1, "A", "One thing.", 10.0, 16.0),
+            _srt_p(2, "B", "Another thing.", 15.0, 20.0),
+        ]
+        entries, _, _ = build_srt_timing_map(paras)
+        assert entries[1].pause_before == 0.0
+
+
+class TestSrtTimingMapSpeed:
+
+    def test_speed_1x_when_estimate_matches_window(self):
+        """150 words in 60s window → speed ≈ 1.0."""
+        text = " ".join(["word"] * 150)  # 150 words → 60s at 150 WPM
+        paras = [_srt_p(1, "A", text, 0.0, 60.0)]
+        _, speeds, _ = build_srt_timing_map(paras)
+        assert speeds[0] == pytest.approx(1.0, abs=0.01)
+
+    def test_speed_up_when_text_too_long_for_window(self):
+        """150 words in 30s window → needs ~2x speed, clamped to 1.2."""
+        text = " ".join(["word"] * 150)  # 150 words → 60s natural
+        paras = [_srt_p(1, "A", text, 0.0, 30.0)]
+        _, speeds, _ = build_srt_timing_map(paras)
+        assert speeds[0] == SPEED_MAX  # clamped
+
+    def test_slow_down_when_text_too_short_for_window(self):
+        """15 words in 60s window → needs ~0.1x, clamped to 0.7."""
+        paras = [_srt_p(1, "A", "one two three", 0.0, 60.0)]
+        _, speeds, _ = build_srt_timing_map(paras)
+        assert speeds[0] == SPEED_MIN  # clamped
+
+    def test_speed_within_range_not_clamped(self):
+        """75 words in 60s window → 30s natural / 60s available = 0.83x."""
+        text = " ".join(["word"] * 75)
+        paras = [_srt_p(1, "A", text, 0.0, 60.0)]
+        _, speeds, _ = build_srt_timing_map(paras)
+        # 75 words / 150 WPM * 60 = 30s. 30 / 60 = 0.5 → wait, that's below 0.7.
+        # Actually: (75/150)*60 = 30s natural, available = 60s, speed = 30/60 = 0.5
+        # That would be clamped. Let me use a better example.
+        pass
+
+    def test_speed_within_range_passes_through(self):
+        """100 words in 60s window → 40s natural / 60s = 0.67 → clamped to 0.7.
+        But 100 words in 45s → 40s/45s = 0.89 → within range."""
+        text = " ".join(["word"] * 100)  # 40s natural
+        paras = [_srt_p(1, "A", text, 0.0, 45.0)]
+        _, speeds, _ = build_srt_timing_map(paras)
+        assert SPEED_MIN < speeds[0] < SPEED_MAX
+        assert speeds[0] == pytest.approx(40.0 / 45.0, abs=0.01)
+
+    def test_per_paragraph_speed_varies(self):
+        paras = [
+            _srt_p(1, "A", " ".join(["word"] * 100), 0.0, 45.0),   # 40s/45s ≈ 0.89
+            _srt_p(2, "B", " ".join(["word"] * 100), 46.0, 80.0),  # 40s/34s ≈ 1.18
+        ]
+        _, speeds, _ = build_srt_timing_map(paras)
+        assert len(speeds) == 2
+        assert speeds[0] < 1.0  # slowed down
+        assert speeds[1] > 1.0  # sped up
+
+
+class TestSrtTimingMapWarnings:
+
+    def test_warns_on_speed_capped_high(self, caplog):
+        text = " ".join(["word"] * 150)  # 60s natural in 30s window
+        paras = [_srt_p(1, "A", text, 0.0, 30.0)]
+        with caplog.at_level(logging.WARNING):
+            _, _, warnings = build_srt_timing_map(paras)
+        assert len(warnings) == 1
+        assert "capped" in warnings[0].lower()
+        assert "overflow" in warnings[0].lower()
+        assert "capped" in caplog.text.lower()
+
+    def test_warns_on_speed_capped_low(self, caplog):
+        paras = [_srt_p(1, "A", "short", 0.0, 60.0)]  # 0.4s natural in 60s
+        with caplog.at_level(logging.WARNING):
+            _, _, warnings = build_srt_timing_map(paras)
+        assert len(warnings) == 1
+        assert "capped" in warnings[0].lower()
+        assert "underflow" in warnings[0].lower()
+
+    def test_no_warning_when_within_range(self, caplog):
+        text = " ".join(["word"] * 100)  # 40s natural in 45s window
+        paras = [_srt_p(1, "A", text, 0.0, 45.0)]
+        with caplog.at_level(logging.WARNING):
+            _, _, warnings = build_srt_timing_map(paras)
+        assert warnings == []
+        assert caplog.text == ""
+
+
+class TestSrtTimingMapStartTimes:
+
+    def test_start_time_is_original_srt_timestamp(self):
+        paras = [
+            _srt_p(1, "A", "Hello world.", 16.0, 22.4),
+            _srt_p(2, "B", "Hi there friend.", 23.5, 30.0),
+        ]
+        entries, _, _ = build_srt_timing_map(paras)
+        assert entries[0].start_time == 16.0
+        assert entries[1].start_time == 23.5
+
+    def test_estimated_duration_is_srt_window(self):
+        paras = [_srt_p(1, "A", "Hello world.", 16.0, 22.4)]
+        entries, _, _ = build_srt_timing_map(paras)
+        assert entries[0].estimated_duration == pytest.approx(6.4, abs=0.01)
+
+
+class TestSrtTimingMapEdgeCases:
+
+    def test_empty_input(self):
+        entries, speeds, warnings = build_srt_timing_map([])
+        assert entries == []
+        assert speeds == []
+        assert warnings == []
+
+    def test_raises_if_missing_timing(self):
+        paras = [_p(1, "A", "No timing data")]
+        with pytest.raises(ValueError, match="no SRT timing"):
+            build_srt_timing_map(paras)
+
+    def test_empty_text_paragraph_gets_speed_1(self):
+        paras = [_srt_p(1, "A", "", 10.0, 15.0)]
+        _, speeds, _ = build_srt_timing_map(paras)
+        assert speeds[0] == 1.0

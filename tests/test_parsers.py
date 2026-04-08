@@ -68,10 +68,9 @@ class TestParseSrt:
     def test_timing_metadata_attached(self):
         text = "1\n00:01:30,500 --> 00:02:00,000\n[X] Timed text.\n"
         result = parse_srt(text)
-        assert hasattr(result[0], "_timing")
-        start, end = result[0]._timing
-        assert start == 90.5
-        assert end == 120.0
+        assert result[0].original_start == 90.5
+        assert result[0].original_end == 120.0
+        assert result[0].original_duration == 29.5
 
     def test_empty_text_returns_empty_list(self):
         assert parse_srt("") == []

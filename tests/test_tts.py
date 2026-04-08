@@ -127,6 +127,7 @@ class TestGenerateClip:
         payload = mock_post.call_args[1]["json"]
         assert payload["voice_settings"]["stability"] == 0.65
         assert payload["voice_settings"]["similarity_boost"] == 0.80
+        assert payload["voice_settings"]["speed"] == 1.0
 
     @patch("dub_chunk.tts.time.sleep")
     @patch("dub_chunk.tts.requests.post")

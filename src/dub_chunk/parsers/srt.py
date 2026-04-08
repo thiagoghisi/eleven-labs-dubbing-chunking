@@ -91,9 +91,9 @@ def parse_srt(text: str) -> list[Paragraph]:
     If cues contain ``[SPEAKER]`` prefixes, those are used as speaker names.
     Consecutive cues from the same speaker are merged into a single Paragraph.
 
-    Timestamp metadata (start/end seconds) is stored on each Paragraph via a
-    ``_timing`` attribute as a tuple ``(start_seconds, end_seconds)`` covering
-    the span from the first cue's start to the last cue's end.
+    Timestamp metadata is stored on each Paragraph via ``original_start``
+    and ``original_end`` fields (in seconds), covering the span from the
+    first cue's start to the last cue's end in the group.
 
     Returns a list of :class:`Paragraph` with sequential IDs starting at 0.
     """
@@ -112,9 +112,9 @@ def parse_srt(text: str) -> list[Paragraph]:
             id=len(paragraphs),
             speaker=group_speaker,
             text=" ".join(group_texts).strip(),
+            original_start=group_start,
+            original_end=group_end,
         )
-        # Attach timing metadata (not part of the dataclass, but accessible).
-        p._timing = (group_start, group_end)  # type: ignore[attr-defined]
         paragraphs.append(p)
 
     for cue in cues[1:]:

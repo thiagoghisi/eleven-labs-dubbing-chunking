@@ -1,15 +1,24 @@
 """Build a timing map for audio assembly.
 
 Distributes paragraphs proportionally by word count, optionally scaling to
-match an original audio duration.
+match an original audio duration.  When SRT timing is available,
+:func:`build_srt_timing_map` uses the original timestamps directly.
 """
 
 from __future__ import annotations
 
+import logging
+
 from dub_chunk.models import Paragraph, TimingEntry
+
+logger = logging.getLogger(__name__)
 
 # Default speaking rate used when no total_duration is supplied.
 _WORDS_PER_MINUTE = 150.0
+
+# ElevenLabs speed parameter limits (API-enforced).
+SPEED_MIN = 0.7
+SPEED_MAX = 1.2
 
 
 def build_timing_map(
@@ -110,3 +119,95 @@ def build_timing_map(
         cursor += durations[idx]
 
     return entries
+
+
+def build_srt_timing_map(
+    paragraphs: list[Paragraph],
+) -> tuple[list[TimingEntry], list[float], list[str]]:
+    """Create timing entries and per-paragraph speeds from SRT timestamps.
+
+    Uses ``original_start`` / ``original_end`` on each paragraph to:
+      - Compute pauses from SRT gaps (``next_start - prev_end``).
+      - Estimate a natural speech duration at 150 WPM.
+      - Derive a speed factor so the TTS clip fits the original window.
+      - Clamp speed to the ElevenLabs API range [0.7, 1.2] and collect warnings.
+
+    Args:
+        paragraphs: Ordered paragraphs **with** ``original_start`` and
+            ``original_end`` set (i.e. parsed from SRT).
+
+    Returns:
+        A tuple of ``(timing_entries, speeds, warnings)`` where *speeds* is a
+        list of per-paragraph speed values and *warnings* is a list of
+        human-readable warning strings for clamped paragraphs.
+
+    Raises:
+        ValueError: If any paragraph lacks SRT timing data.
+    """
+    if not paragraphs:
+        return [], [], []
+
+    for p in paragraphs:
+        if p.original_start is None or p.original_end is None:
+            raise ValueError(
+                f"Paragraph {p.id} ({p.speaker}) has no SRT timing data. "
+                f"--match-srt-timing requires SRT input."
+            )
+
+    entries: list[TimingEntry] = []
+    speeds: list[float] = []
+    warnings: list[str] = []
+
+    for idx, para in enumerate(paragraphs):
+        # -- pause from SRT gap --
+        if idx == 0:
+            pause = para.original_start
+        else:
+            prev = paragraphs[idx - 1]
+            pause = max(para.original_start - prev.original_end, 0.0)
+
+        available = para.original_end - para.original_start
+
+        # -- estimate natural duration at 150 WPM --
+        if para.word_count > 0:
+            estimated_natural = (para.word_count / _WORDS_PER_MINUTE) * 60.0
+        else:
+            estimated_natural = 0.0
+
+        # -- compute speed to fit the window --
+        if available > 0 and estimated_natural > 0:
+            speed = estimated_natural / available
+        else:
+            speed = 1.0
+
+        # -- clamp and warn --
+        if speed > SPEED_MAX:
+            msg = (
+                f"Paragraph {para.id} ({para.speaker}): needs {speed:.2f}x "
+                f"speed but capped at {SPEED_MAX}x — clip will overflow "
+                f"its {available:.1f}s window"
+            )
+            logger.warning(msg)
+            warnings.append(msg)
+            speed = SPEED_MAX
+        elif speed < SPEED_MIN:
+            msg = (
+                f"Paragraph {para.id} ({para.speaker}): needs {speed:.2f}x "
+                f"speed but capped at {SPEED_MIN}x — clip will underflow "
+                f"its {available:.1f}s window"
+            )
+            logger.warning(msg)
+            warnings.append(msg)
+            speed = SPEED_MIN
+
+        speeds.append(round(speed, 4))
+
+        entry = TimingEntry(
+            paragraph=para,
+            start_time=round(para.original_start, 4),
+            estimated_duration=round(available, 4),
+            pause_before=round(pause, 4),
+        )
+        entries.append(entry)
+
+    return entries, speeds, warnings
