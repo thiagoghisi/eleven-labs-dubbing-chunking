@@ -271,7 +271,7 @@ def generate(
 
     for i, entry in enumerate(timing_map):
         p = entry.paragraph
-        clip_path = clips_dir / f"{p.id:04d}_{p.speaker}.mp3"
+        clip_path = clips_dir / f"p{p.id:04d}.mp3"
 
         if resume and clip_path.exists():
             if verbose:
@@ -309,8 +309,8 @@ def generate(
 
     click.echo(f"\nStitching {len(clip_paths)} clips...")
     stitch_audio(
-        clip_paths=clip_paths,
-        timing_map=timing_map,
+        timing_entries=timing_map,
+        clips_dir=clips_dir,
         output_path=output,
     )
 
@@ -478,8 +478,8 @@ def stitch(
             )
 
     stitch_audio(
-        clip_paths=clips,
-        timing_map=timing_map,
+        timing_entries=timing_map,
+        clips_dir=Path(clips_directory),
         output_path=output,
     )
 
