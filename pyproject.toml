@@ -17,5 +17,10 @@ dependencies = [
 [project.scripts]
 dub-chunk = "dub_chunk.cli:main"
 
+[tool.pytest.ini_options]
+markers = [
+    "e2e: end-to-end CLI integration tests",
+]
+
 [tool.setuptools.packages.find]
 where = ["src"]

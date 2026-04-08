@@ -6,7 +6,7 @@ PYTHON := $(VENV)/bin/python3
 PIP := $(VENV)/bin/pip
 CLI := $(VENV)/bin/dub-chunk
 
-.PHONY: setup setup-dev venv deps deps-dev check test clean help parse estimate dry-run
+.PHONY: setup setup-dev venv deps deps-dev check test test-e2e test-unit clean help parse estimate dry-run
 
 # ─── Primary targets ──────────────────────────────────────────────
 
@@ -60,9 +60,19 @@ check:  ## Verify all dependencies are installed
 	@printf "  ELEVENLABS_API_KEY: "; test -n "$$ELEVENLABS_API_KEY" && echo "set ✅" || echo "not set ⚠️"
 	@echo ""
 
-test:  ## Run tests
+test:  ## Run all tests
 	@echo "=== Running tests ==="
 	$(PYTHON) -m pytest tests/ -v
+	@echo ""
+
+test-e2e:  ## Run E2E integration tests only
+	@echo "=== Running E2E tests ==="
+	$(PYTHON) -m pytest tests/ -v -m e2e
+	@echo ""
+
+test-unit:  ## Run unit tests only (fast, no ffmpeg needed)
+	@echo "=== Running unit tests ==="
+	$(PYTHON) -m pytest tests/ -v -m "not e2e"
 	@echo ""
 
 # ─── Quick shortcuts ─────────────────────────────────────────────

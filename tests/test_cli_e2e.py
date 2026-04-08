@@ -15,6 +15,8 @@ from dub_chunk.cli import main
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+pytestmark = pytest.mark.e2e
+
 
 @pytest.fixture
 def runner():
