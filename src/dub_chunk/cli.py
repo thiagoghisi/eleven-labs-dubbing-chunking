@@ -12,6 +12,7 @@ import click
 from dub_chunk import __version__
 from dub_chunk.clean import clean_for_tts
 from dub_chunk.consolidate import consolidate
+from dub_chunk.split import split_long_paragraphs
 from dub_chunk.models import Paragraph, VoiceConfig, TimingEntry
 from dub_chunk.parsers import parse_labeled_text, parse_srt, parse_plain_text
 from dub_chunk.timing import build_timing_map, build_srt_timing_map
@@ -157,6 +158,7 @@ def main():
 @click.option("--pause-switch", type=float, default=0.8, help="Silence (seconds) on speaker switch.")
 @click.option("--total-duration", type=float, default=None, help="Target total duration in seconds (for pacing).")
 @click.option("--no-consolidate", is_flag=True, help="Skip paragraph merging.")
+@click.option("--max-chunk-words", type=int, default=None, help="Split paragraphs exceeding N words. Reduces TTS hallucinations.")
 @click.option("--match-srt-timing", is_flag=True, help="Adjust speed per paragraph to fit original SRT timing windows. SRT input only.")
 @click.option("--resume", is_flag=True, help="Skip existing clips on disk.")
 @click.option("--dry-run", is_flag=True, help="Show timing map without calling the API.")
@@ -179,6 +181,7 @@ def generate(
     pause_switch: float,
     total_duration: float | None,
     no_consolidate: bool,
+    max_chunk_words: int | None,
     match_srt_timing: bool,
     resume: bool,
     dry_run: bool,
@@ -216,6 +219,13 @@ def generate(
         before = len(paragraphs)
         paragraphs = consolidate(paragraphs)
         click.echo(f"Consolidated: {before} -> {len(paragraphs)} paragraphs")
+
+    # --- Step 2b: Split long paragraphs ---
+    if max_chunk_words is not None:
+        before = len(paragraphs)
+        paragraphs = split_long_paragraphs(paragraphs, max_chunk_words)
+        if len(paragraphs) != before:
+            click.echo(f"Split: {before} -> {len(paragraphs)} paragraphs (max {max_chunk_words} words)")
 
     # --- Apply limit ---
     if limit:

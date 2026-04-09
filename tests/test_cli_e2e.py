@@ -215,6 +215,22 @@ class TestDryRunJourney:
         assert result.exit_code == 0
         assert "DRY RUN" in result.output
 
+    def test_dry_run_with_max_chunk_words_splits_long_paragraphs(self, runner):
+        result = runner.invoke(
+            main,
+            [
+                "generate",
+                str(FIXTURES / "sample_labeled.txt"),
+                "--voice", "Dr. Jung=fake",
+                "--voice", "Eissler=fake",
+                "--dry-run",
+                "--max-chunk-words", "15",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "DRY RUN" in result.output
+        assert "Split:" in result.output
+
 
 # ======================================================================
 # Journey 4: Error handling — user provides bad input
