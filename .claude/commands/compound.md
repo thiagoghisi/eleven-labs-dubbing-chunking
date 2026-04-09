@@ -37,6 +37,7 @@ For each qualified learning, use this format:
 - PY = Python/Scripts
 - SI = Search/Index
 - CM = Communication
+- TS = Testing/Test Strategy
 - (Propose new category if needed)
 
 ### Step 4: Output

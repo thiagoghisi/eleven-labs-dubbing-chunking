@@ -82,6 +82,11 @@ venv/bin/dub-chunk generate tests/fixtures/jung_sample.txt \
 - **System**: ffmpeg + ffprobe (on PATH)
 - **API**: ElevenLabs API key (env var ELEVENLABS_API_KEY)
 
+## See Also
+
+- [Compound Rules](.claude/docs/compound-rules.md) — session learnings and development patterns
+- [Outside-In BDD/TDD](.claude/commands/outside-in-bdd-tdd.md) — testing methodology and compound rules OI-001–OI-012
+
 ## Gotchas
 
 - `stitch.py` expects clips at `clips_dir / f"p{id:04d}.mp3"` — if clip naming changes in cli.py, update stitch.py too
